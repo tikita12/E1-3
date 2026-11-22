@@ -10,7 +10,7 @@ REPEATS = 10
 def read_matrix(size=3):
     matrix = []
     while len(matrix) < size:
-        line = input(f"{len(matrix) + 1}번째 행을 입력하세요: ")
+        line = input()
         try:
             row = [float(value) for value in line.split()]
         except ValueError:
@@ -70,21 +70,41 @@ def decide(first_score, second_score, first_label, second_label):
     return first_label if first_score > second_score else second_label
 
 
+def print_section(title):
+    border = "#" + "-" * 39
+    print(f"\n{border}\n# {title}\n{border}")
+
+
 def run_manual():
-    print("필터 A를 입력하세요")
+    print_section("[1] 필터 입력")
+    print("필터 A (3줄 입력, 공백 구분)")
     filter_a = read_matrix()
-    print("필터 B를 입력하세요")
+    print("\n필터 B (3줄 입력, 공백 구분)")
     filter_b = read_matrix()
-    print("판정할 패턴을 입력하세요")
+
+    print_section("[2] 패턴 입력")
+    print("패턴 (3줄 입력, 공백 구분)")
     pattern = read_matrix()
 
-    a_score = mac(pattern, filter_a)
-    b_score = mac(pattern, filter_b)
-    print("A점수 :", a_score, "B점수 :", b_score)
+    start = perf_counter()
+    for _ in range(REPEATS):
+        a_score = mac(pattern, filter_a)
+        b_score = mac(pattern, filter_b)
+    average_ms = (perf_counter() - start) * 1000 / REPEATS
+
     result = decide(a_score, b_score, "A", "B")
-    print("판정 불가" if result == "UNDECIDED" else f"판정 {result}")
-    print("필터 A의 MAC 1회 평균시간(ms):", measure_mac_ms(pattern, filter_a))
-    print("필터 B의 MAC 1회 평균시간(ms):", measure_mac_ms(pattern, filter_b))
+    if result == "UNDECIDED":
+        print_section("[3] MAC 결과 (판정 불가)")
+        print(f"A 점수: {a_score:.16f}")
+        print(f"B 점수: {b_score:.16f}")
+        threshold = f"{EPSILON:g}".replace("e-0", "e-")
+        print(f"판정: 판정 불가 (|A-B| < {threshold})")
+    else:
+        print_section("[3] MAC 결과")
+        print(f"A 점수: {a_score}")
+        print(f"B 점수: {b_score}")
+        print(f"연산 시간(평균/{REPEATS}회): {average_ms:.3f} ms")
+        print(f"판정: {result}")
 
 
 def read_case(case_name, case, filter_groups):
@@ -115,6 +135,9 @@ def read_case(case_name, case, filter_groups):
 
 
 def run_json():
+    print("-"*20)
+    print("[2] JSON 입력 필터")
+    print("-"*20)
     with open("data.json", encoding="utf-8-sig") as file:
         data = json.load(file)
     if not isinstance(data, dict):
@@ -126,24 +149,26 @@ def run_json():
     failures = []
     samples = {}
     for name, case in data["patterns"].items():
-        print(name)
+        print(f"\n--- {name} ---")
         try:
             pattern, expected, filters = read_case(name, case, data["filters"])
             cross_score = mac(pattern, filters["Cross"])
             x_score = mac(pattern, filters["X"])
         except (ValueError, OverflowError) as error:
-            print("FAIL", error)
+            print("Cross 점수: -")
+            print("X 점수: -")
+            print("판정: - | expected: - | FAIL")
+            print(f"사유: {error}")
             failures.append((name, "-", "-", "-", "-", str(error)))
             continue
 
         samples.setdefault(len(pattern), (pattern, filters["Cross"]))
         result = decide(cross_score, x_score, "Cross", "X")
-        print("십자가 점수:", cross_score, "X 점수:", x_score)
-        print("내 판정:", result, "예상 정답:", expected)
-        if result == expected:
-            print("PASS")
-        else:
-            print("FAIL")
+        status = "PASS" if result == expected else "FAIL"
+        print(f"Cross 점수: {cross_score}")
+        print(f"X 점수: {x_score}")
+        print(f"판정: {result} | expected: {expected} | {status}")
+        if result != expected:
             reason = f"두 점수 차이가 {EPSILON:g} 미만" if result == "UNDECIDED" else "예상 정답과 다른 판정"
             failures.append((name, cross_score, x_score, abs(cross_score - x_score),
                              f"{result} / {expected}", reason))
@@ -168,6 +193,10 @@ def run_json():
 
 
 def main():
+    print("=== Mini NPU Simulator ===")
+    print()
+    print("모드 선택")
+    print()
     print("====================\n1. 직접입력\n2. JSON 파일 분석\n====================")
     while True:
         choice = input("번호를 입력하세요 :").strip()

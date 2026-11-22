@@ -84,10 +84,12 @@ elif choice == "2":
         print(case_name)
         pattern = case["input"]
         size_key = case_name.rsplit("_", 1)[0]
-        filters = data["filters"][size_key]
+        filters = {}
+        for name, matrix in data["filters"][size_key].items():
+            filters[normalize_label(name)] = matrix
 
-        cross_score = mac(pattern, filters["cross"])
-        x_score = mac(pattern, filters["x"])
+        cross_score = mac(pattern, filters["Cross"])
+        x_score = mac(pattern, filters["X"])
         print("십자가 점수:", cross_score, "X 점수:", x_score)
 
         if abs(cross_score - x_score) < 1e-9:

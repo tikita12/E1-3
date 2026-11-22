@@ -1,5 +1,6 @@
 from time import perf_counter
 import json
+import re
 
 
 def read_matrix():
@@ -21,6 +22,16 @@ def read_matrix():
 
         pattern.append(row)
     return pattern
+
+def is_square(matrix, size):
+    if not isinstance(matrix, list) or len(matrix) != size:
+        return False
+
+    for row in matrix:
+        if not isinstance(row, list) or len(row) != size:
+            return False
+
+    return True
 
 def mac(pattern, matrix_filter):
     score = 0.0
@@ -67,27 +78,61 @@ def run_manual():
 
 
 
-
+print("=" * 20)
 print("1. 직접입력")
 print("2. JSON 파일 분석")
+print("=" * 20)
 choice = input("번호를 입력하세요 :").strip()
 
 if choice == "1":
     run_manual()
 elif choice == "2":
-    with open("data.json", encoding="utf-8-sig") as file:
-        data = json.load(file)
+    try:
+        with open("data.json", encoding="utf-8-sig") as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        raise SystemExit("현재 폴더에 data.json이 없습니다.")
+    except json.JSONDecodeError:
+        raise SystemExit("data.json의 JSON 문법을 확인하세요.")
+    if not isinstance(data, dict):
+        raise SystemExit("data.json의 전체 내용은 JSON 객체여야 합니다.")
 
+    for key in ("filters", "patterns"):
+        if not isinstance(data.get(key), dict):
+            raise SystemExit(f"data.json에서 {key} 항목을 찾을 수 없거나 형식이 잘못됐습니다.")
     passed = 0
     failed_cases = []
+
+    samples = {}
+
     for case_name, case in data["patterns"].items():
         print(case_name)
+
+        if "input" not in case or "expected" not in case:
+            reason = "패턴에 input 또는 expected가 없습니다."
+            print("FAIL", reason)
+            failed_cases.append(f"{case_name}: {reason}")
+            continue
+
         pattern = case["input"]
-        size_key = case_name.rsplit("_", 1)[0]
+        match = re.fullmatch(r"size_([1-9][0-9]*)_([0-9]+)", case_name)
+        if match is None:
+            reason = "패턴 이름 형식 오류 (예: size_13_2)"
+            print("FAIL", reason)
+            failed_cases.append(f"{case_name}: {reason}")
+            continue
+
+        size = int(match.group(1))
+        size_key = f"size_{size}"
         filters = {}
         for name, matrix in data["filters"][size_key].items():
             filters[normalize_label(name)] = matrix
-
+        size = int(size_key.split("_")[1])
+        if not all(is_square(m, size) for m in (pattern, filters["Cross"], filters["X"])):
+            reason = f"입력과 두 필터는 각각 {size}×{size}여야 합니다."
+            print("FAIL", reason)
+            failed_cases.append(f"{case_name}: {reason}")
+            continue
         cross_score = mac(pattern, filters["Cross"])
         x_score = mac(pattern, filters["X"])
         print("십자가 점수:", cross_score, "X 점수:", x_score)
@@ -101,6 +146,9 @@ elif choice == "2":
 
         expected = normalize_label(case["expected"])
 
+        if size not in samples:
+            samples[size] = (pattern, filters["Cross"])
+
         print("내 판정:", result, "예상 정답:", expected)
         if result == expected:
             print("PASS")
@@ -109,6 +157,7 @@ elif choice == "2":
             print("FAIL")
             reason = "두 점수의 차이가 1e-9 미만" if result == "UNDECIDED" else "예상 정답과 다른 판정"
             failed_cases.append(f"{case_name}: {reason} (판정 {result}, 예상 {expected})")
+
     total = len(data["patterns"])
     print("전체:", total, "통과:", passed, "실패:", total - passed)
     for failed_case in failed_cases:
@@ -117,9 +166,8 @@ elif choice == "2":
     cross_3 = [[0, 1, 0], [1, 1, 1], [0, 1, 0]]
     average_ms = measure_mac_ms(cross_3, cross_3)
     print(f"3×3 | 9회 | {average_ms:.6f}")    
-    for size in [5, 13, 25]:
-        pattern = data["patterns"][f"size_{size}_1"]["input"]
-        cross_filter = data["filters"][f"size_{size}"]["cross"]
+    for size in sorted(samples):
+        pattern, cross_filter = samples[size]
         average_ms = measure_mac_ms(pattern, cross_filter)
         print(f"{size}×{size} | {size * size}회 | {average_ms:.6f}")
    

@@ -2,8 +2,6 @@ from time import perf_counter
 import json
 
 
-
-
 def read_matrix():
     pattern = []
     while len(pattern) < 3:
@@ -31,6 +29,17 @@ def mac(pattern, matrix_filter):
             score += pattern[row][column] * matrix_filter[row][column]
     return score
 
+def measure_mac_ms(pattern, matrix_filter):
+    start = perf_counter()
+    for _ in range(10):
+        mac(pattern, matrix_filter)
+    elapsed = perf_counter() - start
+    return elapsed * 1000 / 10
+
+def normalize_label(label):
+    labels = {"+": "Cross", "cross": "Cross", "x": "X"}
+    return labels[label.strip().lower()]
+
 def run_manual():
 
     print("필터 A를 입력하세요")
@@ -51,14 +60,13 @@ def run_manual():
     else:
         print("판정 B")
 
+    a_ms = measure_mac_ms(pattern, filter_a)
+    b_ms = measure_mac_ms(pattern, filter_b)
+    print("필터 A의 MAC 1회 평균시간(ms):", a_ms)
+    print("필터 B의 MAC 1회 평균시간(ms):", b_ms)
 
-    start = perf_counter()
-    for _ in range(10):
-        mac(pattern, filter_a)
-    elapsed = perf_counter() - start
 
-    average_ms = elapsed * 1000 / 10
-    print("필터 A의 MAC 1회 평균시간(ms):", average_ms)
+
 
 print("1. 직접입력")
 print("2. JSON 파일 분석")
@@ -89,8 +97,7 @@ elif choice == "2":
         else:
             result = "X"
 
-        labels = {"x": "X", "+": "Cross"}
-        expected = labels[case["expected"]]
+        expected = normalize_label(case["expected"])
 
         print("내 판정:", result, "예상 정답:", expected)
         if result == expected:
@@ -104,6 +111,16 @@ elif choice == "2":
     print("전체:", total, "통과:", passed, "실패:", total - passed)
     for failed_case in failed_cases:
         print(failed_case)
+    print("크기 | MAC 횟수 | 10회 평균 시간(ms)")
+    cross_3 = [[0, 1, 0], [1, 1, 1], [0, 1, 0]]
+    average_ms = measure_mac_ms(cross_3, cross_3)
+    print(f"3×3 | 9회 | {average_ms:.6f}")    
+    for size in [5, 13, 25]:
+        pattern = data["patterns"][f"size_{size}_1"]["input"]
+        cross_filter = data["filters"][f"size_{size}"]["cross"]
+        average_ms = measure_mac_ms(pattern, cross_filter)
+        print(f"{size}×{size} | {size * size}회 | {average_ms:.6f}")
+   
 else:
     print("1 또는 2를 입력하세요")
 

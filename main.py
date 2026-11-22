@@ -107,18 +107,7 @@ def run_manual():
         print(f"판정: {result}")
 
 
-def read_case(case_name, case, filter_groups):
-    match = re.fullmatch(r"size_([1-9][0-9]*)_([0-9]+)", case_name)
-    if match is None:
-        raise ValueError("패턴 이름 형식 오류 (예: size_13_2)")
-    size = int(match.group(1))
-    if not isinstance(case, dict) or "input" not in case or "expected" not in case:
-        raise ValueError("패턴에는 input과 expected가 필요합니다.")
-    pattern = case["input"]
-    validate_matrix(pattern, size, "입력")
-    expected = normalize_label(case["expected"])
-
-    group = filter_groups.get(f"size_{size}")
+def load_filter_group(size, group):
     if not isinstance(group, dict):
         raise ValueError(f"size_{size} 필터 묶음이 없거나 형식이 잘못됐습니다.")
     filters = {}
@@ -131,13 +120,27 @@ def read_case(case_name, case, filter_groups):
     for label in ("Cross", "X"):
         if label not in filters:
             raise ValueError(f"{label} 필터가 없습니다.")
-    return pattern, expected, filters
+    return filters
+
+
+def read_case(case_name, case, groups, errors):
+    match = re.fullmatch(r"size_([1-9][0-9]*)_([0-9]+)", case_name)
+    if match is None:
+        raise ValueError("패턴 이름 형식 오류 (예: size_13_2)")
+    size = int(match.group(1))
+    if not isinstance(case, dict) or "input" not in case or "expected" not in case:
+        raise ValueError("패턴에는 input과 expected가 필요합니다.")
+    pattern = case["input"]
+    validate_matrix(pattern, size, "입력")
+    expected = normalize_label(case["expected"])
+    key = f"size_{size}"
+    if key not in groups:
+        raise ValueError(errors.get(key, f"{key} 필터 묶음이 없습니다."))
+    return pattern, expected, groups[key]
 
 
 def run_json():
-    print("-"*20)
-    print("[2] JSON 입력 필터")
-    print("-"*20)
+    print_section("[1] 필터 로드")
     with open("data.json", encoding="utf-8-sig") as file:
         data = json.load(file)
     if not isinstance(data, dict):
@@ -146,12 +149,27 @@ def run_json():
         if not isinstance(data.get(key), dict):
             raise ValueError(f"data.json에서 {key} 항목을 찾을 수 없거나 형식이 잘못됐습니다.")
 
+    groups = {}
+    errors = {}
+    for key, group in data["filters"].items():
+        try:
+            match = re.fullmatch(r"size_([1-9][0-9]*)", key)
+            if match is None:
+                raise ValueError("필터 묶음 이름 형식 오류 (예: size_5)")
+            groups[key] = load_filter_group(int(match.group(1)), group)
+        except (ValueError, OverflowError) as error:
+            errors[key] = str(error)
+            print(f"✗ {key} 필터 로드 실패 ({error})")
+        else:
+            print(f"✓ {key:<7} 필터 로드 완료 (Cross, X)")
+
+    print_section("[2] 패턴 분석 (라벨 정규화 적용)")
     failures = []
     samples = {}
     for name, case in data["patterns"].items():
         print(f"\n--- {name} ---")
         try:
-            pattern, expected, filters = read_case(name, case, data["filters"])
+            pattern, expected, filters = read_case(name, case, groups, errors)
             cross_score = mac(pattern, filters["Cross"])
             x_score = mac(pattern, filters["X"])
         except (ValueError, OverflowError) as error:
@@ -159,37 +177,49 @@ def run_json():
             print("X 점수: -")
             print("판정: - | expected: - | FAIL")
             print(f"사유: {error}")
-            failures.append((name, "-", "-", "-", "-", str(error)))
+            failures.append((name, str(error)))
             continue
 
         samples.setdefault(len(pattern), (pattern, filters["Cross"]))
         result = decide(cross_score, x_score, "Cross", "X")
-        status = "PASS" if result == expected else "FAIL"
-        print(f"Cross 점수: {cross_score}")
-        print(f"X 점수: {x_score}")
+        if result == "UNDECIDED":
+            status = "FAIL (동점 규칙)"
+            failures.append((name, "동점(UNDECIDED) 처리 규칙에 따라 FAIL"))
+            print(f"Cross 점수: {cross_score:.16f}")
+            print(f"X 점수: {x_score:.16f}")
+        else:
+            status = "PASS" if result == expected else "FAIL"
+            if result != expected:
+                failures.append((name, f"판정 {result}, expected {expected} 불일치"))
+            print(f"Cross 점수: {cross_score}")
+            print(f"X 점수: {x_score}")
         print(f"판정: {result} | expected: {expected} | {status}")
-        if result != expected:
-            reason = f"두 점수 차이가 {EPSILON:g} 미만" if result == "UNDECIDED" else "예상 정답과 다른 판정"
-            failures.append((name, cross_score, x_score, abs(cross_score - x_score),
-                             f"{result} / {expected}", reason))
 
-    total = len(data["patterns"])
-    print("전체:", total, "통과:", total - len(failures), "실패:", len(failures))
-    if failures:
-        print("실패 케이스 | Cross 점수 | X 점수 | 점수 차이 | 판정 / 예상 | 사유")
-        for failure in failures:
-            print(*failure, sep=" | ")
-
-    print(f"크기 | MAC 횟수 | {REPEATS}회 평균 시간(ms)")
+    print_section(f"[3] 성능 분석 (평균/{REPEATS}회)")
+    print("크기       평균 시간(ms)    연산 횟수")
+    print("-" * 37)
     cross_3 = [[0, 1, 0], [1, 1, 1], [0, 1, 0]]
     samples.setdefault(3, (cross_3, cross_3))
     for size in sorted({5, 13, 25}.union(samples)):
-        if size not in samples:
-            print(f"{size}×{size} | {size * size}회 | 측정할 유효한 입력 없음")
-            continue
-        pattern, cross_filter = samples[size]
-        average_ms = measure_mac_ms(pattern, cross_filter)
-        print(f"{size}×{size} | {size * size}회 | {average_ms:.6f}")
+        dimension = f"{size}×{size}"
+        if size in samples:
+            pattern, cross_filter = samples[size]
+            time_text = f"{measure_mac_ms(pattern, cross_filter):.3f}"
+        else:
+            time_text = "-"
+        print(f"{dimension:<9} {time_text:>13} {size * size:>12}")
+
+    print_section("[4] 결과 요약")
+    total = len(data["patterns"])
+    print(f"총 테스트: {total}개")
+    print(f"통과: {total - len(failures)}개")
+    print(f"실패: {len(failures)}개")
+    print("\n실패 케이스:")
+    if failures:
+        for name, reason in failures:
+            print(f"- {name}: {reason}")
+    else:
+        print("없음")
 
 
 def main():
